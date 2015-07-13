@@ -1,0 +1,58 @@
+[
+  {
+    "model": "portal.sensors",
+    "fields": {
+      "id": "1",
+      "sensor_type": "temperature"
+    }
+  },
+  {
+    "model": "portal.sensors",
+    "fields": {
+      "id": "2",
+      "sensor_type": "core_freq"
+    }
+  },
+  {
+    "model": "portal.sensors",
+    "fields": {
+      "id": "3",
+      "sensor_type": "altitude"
+    }
+  },
+  {
+    "model": "portal.sensors",
+    "fields": {
+      "id": "4",
+      "sensor_type": "pressure"
+    }
+  },
+  {
+    "model": "portal.sensors",
+    "fields": {
+      "id": "5",
+      "sensor_type": "arm_freq"
+    }
+  },
+  {
+    "model": "portal.sensors",
+    "fields": {
+      "id": "6",
+      "sensor_type": "core_volt"
+    }
+  },
+  {
+    "model": "portal.sensors",
+    "fields": {
+      "id": "7",
+      "sensor_type": "sdram_volt"
+    }
+  },
+  {
+    "model": "portal.sensors",
+    "fields": {
+      "id": "8",
+      "sensor_type": "soc_temp"
+    }
+  }
+]
