@@ -1,11 +1,11 @@
 #!/bin/sh
 
-export DJANGO_SETTINGS_MODULE=DjangoREST.settings
-export PYTHONPATH=/home/adi/p1/cydonix/portal/DjangoREST
+export DJANGO_SETTINGS_MODULE=DjangoPROJECT.settings
+export PYTHONPATH=/path/to/DjangoPROJECT
 
 #venv:
 pwd
-cd DjangoREST
+cd /path/to/DjangoProject
 pwd  
 
-exec /home/adi/p1/cydonix/portal/envportal/bin/python /home/adi/p1/cydonix/portal/ejabberd-auth.py
+exec /path/to/env      /path/to/ejabberd-auth.py
