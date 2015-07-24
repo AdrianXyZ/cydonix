@@ -1,43 +1,6 @@
-#!/usr/bin/env python
-
-# File Name: 'ejabberd-auth'
-#
-# Project: 'Integratech'
-#
-# Created: '4/10/14', '4:48 PM'
-#
-# Author: 'Ganea Ionut Iulian' (ionut.ganea@vitheia.com)
-#
-# Copyright (c) Vitheia Development S.R.L All rights reserved.
 """
-Usage: ejabberd-auth.py
-
 Run as an ejabberd external authentication program and accept any
-authentication request that uses a password that matches the value
-of the BOSH_SECRET Django setting.
-
-How to configure and use:
-- generate a random secret and save it in your Django settings file
-  under the name BOSH_SECRET
-- create a wrapper script that sets DJANGO_SETTINGS_MODULE and
-  PYTHONPATH to the desired values and executes this script:
-
-#/bin/sh
-
-export DJANGO_SETTINGS_MODULE=...
-export PYTHONPATH=...
-
-# ADD THE FOLLOWING LINE
-exec /path/to/ejabberd-auth.py
-
-# OR THE NEXT
-exec /path_to_virtual_env/python /path/to/ejabberd-auth.py
-
-- configure ejabberd to use the above wrapper script, for example:
-
-{host_config, "localhost", [{auth_method, [external, internal]},
-                            {extauth_program, "/etc/ejabberd/ejabberd-auth-wrapper"}]}.
-
+authentication request that uses a password that matches in django database .
 """
 
 import django
@@ -76,18 +39,11 @@ def to_ejabberd(bool):
  
 
 def auth(username, server, password):
-    """Script is configurable:
-        - run with hard coded BOSH_SECRET;
-        - run with auto generated tokens.
-    """
     logger.info("inside auth")
-    #return True 
     try:
         user = User.objects.get(username=username)
         if check_password(password, user.password):
-            # End Tunnel specific
             return True
-            # Tunnel specific .....
         else:
             logging.info(username + ' failed auth')
             return False
@@ -112,5 +68,4 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
     process()
-    #auth("tedddst1","22222","test1")
     
