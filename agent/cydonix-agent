@@ -31,6 +31,10 @@ device_description = {
     'core_freq': 'BCM2835 GPU code frequency',
     'altitude': 'BMP180 calculated altitude',
     'pressure': 'BMP180 pressure sensor',
+    'led1': 'BCM2835 GPIO3',
+    'led2': 'BCM2835 GPIO4',
+    'button1': 'BCM2835 GPIO5',
+    'button2': 'BCM2835 GPIO6',
     'arm_freq': 'BCM2835 ARM frequency',
     'core_volt': 'BCM2835 core voltage',
     'sdram_volt': 'BCM2835 ram voltage',
@@ -45,7 +49,11 @@ device_alias = {
     'altitude': 'Altitude', 
     'soc_temp': 'Core temperature',
     'temperature': 'Temperature', 
-    'pressure': 'Pressure'
+    'pressure': 'Pressure',
+    'led1': 'LED 1',
+    'led2': 'LED 2',
+    'button1': 'Button 1',
+    'button2': 'Button 2',
 }
 
 class RaspberryGpio(threading.Thread) :
@@ -63,24 +71,47 @@ class RaspberryGpio(threading.Thread) :
         GPIO.setmode(GPIO.BOARD)
         self.device_val = {}
         # Initial state for each device
-        self.device_state = {'switch': None}
-        # IO pin for devices
-        self.device_pin = {'switch': 7}
-        # Set IO pin for each device
-        for key in self.device_pin:
-            GPIO.setup(self.device_pin[key], GPIO.OUT)
+        self.device_state = {
+            'led1':    None,
+            'led2':    None,
+        }
+        # IO pin, mode, pull-up/down for devices
+        self.device_info = {
+            'led1': {
+                'pin': 15,
+                'mode': 'out',
+            },
+            'led2': {
+                'pin': 16,
+                'mode': 'out',
+            },
+            'button1': {
+                'pin': 18,
+                'pud': 'down',
+            },
+            'button2': {
+                'pin': 22,
+                'pud': 'up',
+            },
+        }
+        for (key, info) in self.device_info.items():
+            if 'mode' in info and info['mode'] == 'out':
+                GPIO.setup(info['pin'], GPIO.OUT)
+            if 'pud' in info:
+                GPIO.setup(info['pin'], GPIO.IN,
+                    pull_up_down=GPIO.PUD_DOWN if info['pud'] == 'down' else GPIO.PUD_UP)
+                GPIO.add_event_detect(info['pin'], GPIO.BOTH, callback=self.device_event, bouncetime=200)
 
     def setOutput(self, key):
         """Sets output value for a specific device."""
-        if (self.device_state[key] == "True" or
-            self.device_state[key] == "true"):
-            GPIO.output(self.device_pin[key], True)
-        elif (self.device_state[key] == "False" or
-              self.device_state[key] == "false"):
-            GPIO.output(self.device_pin[key], False)
+        if self.device_state[key].lower() == "true":
+            GPIO.output(self.device_info[key]['pin'], True)
+        elif self.device_state[key].lower() == "false":
+            GPIO.output(self.device_info[key]['pin'], False)
 
     def setDeviceState(self, key, value):
-        self.device_state[key] = value
+        if key in self.device_state:
+            self.device_state[key] = value
 
     def getDeviceState(self):
         return self.device_state
@@ -91,13 +122,32 @@ class RaspberryGpio(threading.Thread) :
     def getDeviceValue(self):
         return self.device_val
 
+    def device_event(self, pin, *args):
+        new_val = GPIO.input(pin)
+
+        # Find key by pin
+        key = None
+        for k in self.device_info:
+            if self.device_info[k]['pin'] == pin:
+                key = k
+                break
+
+        if new_val != self.device_val[key]:
+             self.device_val[key] = True if new_val else False
+             pubmsg = '%s=%s' % (key, self.device_val[key])
+             xmpp.publish(pubmsg)
+             logging.info(pubmsg)
+
     def run(self):
         # val_temp stores the previous sensor readings
         val_temp = {
             'temperature': 0.0,
             'pressure': 0.0,
             'altitude': 0.0,
-            'switch': self.device_state['switch'],
+            'led1': None,
+            'led2': None,
+            'button1': None,
+            'button2': None,
             'soc_temp': 0.0,
             'arm_freq': 0.0,
             'core_freq': 0.0,
@@ -120,7 +170,10 @@ class RaspberryGpio(threading.Thread) :
                 'core_freq': None,
                 'core_volt': None,
                 'sdram_volt': None,
-                'switch': False
+                'led1': True if GPIO.input(self.device_info['led1']['pin']) else False,
+                'led2': True if GPIO.input(self.device_info['led2']['pin']) else False,
+                'button1': True if GPIO.input(self.device_info['button1']['pin']) else False,
+                'button2': True if GPIO.input(self.device_info['button2']['pin']) else False,
             }
             vcgencmd = {
                 'core_volt': "measure_volts",
@@ -151,7 +204,7 @@ class RaspberryGpio(threading.Thread) :
             for key in replace_2:
                 self.device_val[key] = self.device_val[key].replace(replace_2[key], '')
             for key in self.device_val:
-                if(key != 'switch'):
+                if(key not in ['led1', 'led2', 'button1', 'button2']):
                     self.device_val[key] = float(self.device_val[key])
 
             self.device_val['core_freq'] /= 1000000.0
@@ -162,28 +215,32 @@ class RaspberryGpio(threading.Thread) :
 
             #   We will publish a notification on the pubsub node
             # in case that sensor values have been modified with
-            # 5 percents comparing to the previous values ( this
-            # does not include the switch state ) :
+            # 5 percents comparing to the previous values
+            modified = []
             for key in self.device_val:
-                for key2 in self.device_pin:
-                    if (key != key2):
-                        if (self.device_val[key] >= val_temp[key] + 0.005*val_temp[key] or
-                                self.device_val[key] <= val_temp[key] - 0.005*val_temp[key]):
-                             modified = True
-                             break
+                if key in ['led1', 'led2', 'button1', 'button2']:
+                     if self.device_val[key] != val_temp[key]:
+                         modified.append(key)
+                elif (self.device_val[key] >= val_temp[key] + 0.005*val_temp[key] or
+                        self.device_val[key] <= val_temp[key] - 0.005*val_temp[key]):
+                     modified.append(key)
             if modified:
-                mymsg = ' '.join(['%s=%s' % (key, value) for (key, value)
-                                 in self.device_val.items()])
-                xmpp.publish(mymsg)
-                modified = False
+                pubmsg = ' '.join(['%s=%s' % (key, self.device_val[key]) for key
+                                 in modified])
+                xmpp.publish(pubmsg)
+                logging.info(pubmsg)
             val_temp = self.device_val
+#global dictionary for message replay with key id of message send   and value  'message to' 
+messReplay={}
+idPermissAgent=1
+
 
 
 class XmppClass(sleekxmpp.ClientXMPP):
 
     """Xmpp client class."""
 
-    def __init__(self, jid, password, node):
+    def __init__(self, jid, password, node,permissAgent):
         super(XmppClass, self).__init__(jid, password)
 
         self.register_plugin('xep_0060')
@@ -191,6 +248,7 @@ class XmppClass(sleekxmpp.ClientXMPP):
         self.pubsub_server = "pubsub." + str(self.boundjid.host)
         self.add_event_handler('session_start', self.start)
         self.add_event_handler('message', self.message)
+        self.permissAgent=permissAgent
 
 
     def start(self, event):
@@ -201,9 +259,27 @@ class XmppClass(sleekxmpp.ClientXMPP):
             logging.info(msg)
             # Message splitting
             message_string = msg['body'].split(" ")
+            fromMsg=str(msg['from'])
+            permissJ=fromMsg.split("/")
+            ok=True
+            try:
+                if(message_string[4]=='SET'):
+                    ok=True
+                else:
+                    ok=False
+            except IndexError:
+                ok=False
 
             if (message_string[0] == 'GET'):
             # GET command :
+                user=str(msg['from']).split("@")
+                permission=str(message_string[0])
+                devices=str(message_string[1:])
+                global idPermissAgent
+                idPermissAgent+=1
+                idSend=str(idPermissAgent)
+                body="AUTH id= "+ idSend +" user= "+user[0]+" permission= "+permission+" "+"devices= "+devices
+                self.send_message(mto=self.permissAgent  ,mbody=body)
                 output_vals = {}
                 device_val = rgpio.getDeviceValue()
                 for i in message_string[1:]:
@@ -214,29 +290,58 @@ class XmppClass(sleekxmpp.ClientXMPP):
                 # XMPP Message Composition and reply
                 mymsg = ' '.join(['%s=%s' % (key, value) for (key, value)
                                  in output_vals.items()])
-                msg.reply(mymsg).send()
+                #save in dictionary the user with id of message sended to permissionAgent
+                global messReplay
+                backTo=str(msg['from'])
+                messReplay[idSend]=[backTo,mymsg]
+                #print messReplay[idSend]
+                #msg.reply(mymsg).send()
                 logging.info(msg)
 
-            elif (message_string[0] == 'SET'):
+            elif ((message_string[0] == 'SET') or ((permissJ[0]==self.permissAgent)&(ok==True))) :
             # SET command :
-                my_device = {}
-                for i in message_string[1:]:
+                if(permissJ[0]!=str(self.permissAgent)):
+                   #Sending permission to permission Agent
+                    user=str(msg['from']).split("@")
+                    permission=str(message_string[0])
+                    devices=str(message_string[1:])
+                    idPermissAgent+=1
+                    idSend=str(idPermissAgent)
+                    body="AUTH id= "+idSend+" user= "+user[0]+" permission= "+permission+" devices= "+devices
+                    self.send_message(mto=self.permissAgent ,mbody=body)
+                    backTo=str(msg['from'])
+                    messReplay[idSend]=[backTo,message_string[1:]]
+                elif((permissJ[0]==str(self.permissAgent)) &( message_string[4]=='SET')& (message_string[3]=='granted')) :
+                    #Testing if permission it's granted for SET ,then  
+                    my_device = {}
+                    for i in messReplay[message_string[2]][1]:
                 # Creating dictionary with devices and control values
-                    device = i.split("=")
-                    my_device[device[0]] = device[1]
-                device_state = rgpio.getDeviceState();
-                for key in my_device:
+                        device = i.split("=")
+                        my_device[device[0]] = device[1]
+                    modified = []
+                    device_state = rgpio.getDeviceState()
+                    device_value = rgpio.getDeviceValue()
+                    for key in my_device:
                 #  If device exists in device_state dictionary, then
                 # it will change the state of that device
-                    if device_state.has_key(key):
-                        rgpio.setDeviceState(key, my_device[key])
-                        rgpio.setDeviceValue(key, my_device[key])
-                        rgpio.setOutput(key)
-                # XMPP Message Composition and reply
-                mymsg = ' '.join(['%s=%s' % (key, value) for (key, value)
-                                 in device_state.items()])
-                msg.reply(mymsg).send()
-                logging.info(msg)
+                        if device_state.has_key(key):
+                            if my_device[key] != device_state[key]:
+                                 modified.append(key)
+                            rgpio.setDeviceState(key, my_device[key])
+                            rgpio.setDeviceValue(key, my_device[key])
+                            rgpio.setOutput(key)
+                # XMPP Message Composition and reply message 
+                        mymsg = ' '.join(['%s=%s' % (key, device_state[key]) for key
+                                 in filter(lambda k: k in device_state, my_device.iterkeys())])
+                        self.send_message(mto=messReplay[message_string[2]][0], mbody=mymsg)
+                        #msg.reply(mymsg).send()
+                        logging.info(msg)
+                        if modified:
+                             pubmsg = ' '.join(['%s=%s' % (key, device_value[key]) for key in modified])
+                        xmpp.publish(pubmsg)
+                        logging.info(pubmsg)
+                elif((permissJ[0]==str(self.permissAgent))& (message_string[4]=='SET') &(message_string[3]=='forbidden')):
+                     self.send_message(mto=messReplay[message_string[2]][0],mbody="forbidden")  
 
             elif (message_string[0] == 'DISCO'):
             # Custom disco functionality
@@ -245,8 +350,8 @@ class XmppClass(sleekxmpp.ClientXMPP):
                 for key in device_val:
                 # It will send data to cydonix client about devices
                 # which can send data from sensors
-                    if device_val[key] != 0:
-                        device_disco[key] = device_units[key] + "|" + \
+                    # if device_val[key] != 0:
+                        device_disco[key] = (device_units[key] if key in device_units else "N/A") + "|" + \
                                             device_description[key] + "|" + \
                                             device_alias[key]
                 # XMPP Message Composition and reply
@@ -254,13 +359,24 @@ class XmppClass(sleekxmpp.ClientXMPP):
                                  in device_disco.items()])
                 msg.reply(mymsg).send()
                 logging.info(msg)
-
+            elif((permissJ[0]==str(self.permissAgent)) & (message_string[0]=='AUTH') ):
+                #Message from permissionAgent with answer (granted/forbidden)
+                if (message_string[3]=="granted"):
+                       to=str(messReplay[message_string[2]][0])
+                       body=str(messReplay[message_string[2]][1])
+                       self.send_message(mto=to,mbody=body)
+                elif(message_string[3]!="granted"):    
+                       to=str(messReplay[message_string[2]][0])
+                       body=str(messReplay[message_string[2]][1])
+                       self.send_message(mto=to,mbody="forbidden")
+               
+            #elif(str(permissJ[0])!=str(self.permissAgent)):
             else:
             # HELP or invalid command
                 error_message = "Available commands \
                                  \n GET device ...  \
                                  \n SET device=value ... "
-                msg.reply(error_message).send()
+                msg.reply(error_message).send() 
                 logging.info(msg)
 
     def publish(self, data):
@@ -310,10 +426,11 @@ if __name__ == '__main__':
     username = conf.get("XMPP", "username")
     password = conf.get("XMPP", "password")
     node = conf.get("XMPP", "node")
+    permissAgent=conf.get("XMPP","permissionAgent")
 
     polling = int(conf.get("Device", "polling"))
 
-    xmpp = XmppClass(username, password, node)
+    xmpp = XmppClass(username, password, node,permissAgent)
 
     # Starting GPIO sensor reading thread
     rgpio = RaspberryGpio()
